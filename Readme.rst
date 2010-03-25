@@ -15,7 +15,7 @@ devices and computers.
 Installation
 ------------
 
-1. In a terminal, go to the folder where cwwwd is downloaded
+1. In a terminal, go to the download folder containing cwwwd
 
 ::
 
@@ -25,13 +25,13 @@ Installation
 
 ::
 
-    $ sudo cp cwwwd /usr/local/bin
+    $ cp cwwwd /usr/local/bin
 
 3. Make cwwwd executable
 
 ::
 
-    $ sudo chmod a+x /usr/local/bin/cwwwd
+    $ chmod a+x /usr/local/bin/cwwwd
 
 
 Usage
@@ -55,7 +55,7 @@ Options
 Server Type
 ~~~~~~~~~~~
 By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
-installed on your computer, no fear!  cwwwd comes with its own internal 
+installed on your computer, no problem!  cwwwd comes with its own internal
 HTTP server.
 
 Specify which server to use with the the ``-s`` option, providing it either
@@ -71,9 +71,10 @@ and ``-m``, the maximum number of ports to search.
 
 Access Control
 ~~~~~~~~~~~~~~
-By default only localhost may access server.  Use the ``-a`` and ``-d``
-options to provide lists of client IPs that are allowed and denied access
-to the server.  Use ``-a all`` to allow access to all clients.
+By default only localhost may access server.  Control who is allowed and
+denied access to your server by providing comma-separated lists of IPs to
+the ``-a`` and ``-d`` options.  Use ``-a all`` to allow access to all
+clients.
 
 The denied client list overrides the allowed client list.
 
