@@ -8,7 +8,7 @@ cwwwd starts a web server using your current working directory as the
 server's default document root and also provides automatic directory
 listings.
 
-The application was created to make file sharing easier with network
+The application was created to simplify file sharing with network
 devices and computers.
 
 
@@ -48,9 +48,6 @@ Example::
 
     -- Press Enter To Stop Server --
 
-You can now connect to ``your_computer_ip:port_number`` from other computers
-and devices.
-
 
 Options
 -------
@@ -75,8 +72,8 @@ and ``-m``, the maximum number of ports to search.
 Access Control
 ~~~~~~~~~~~~~~
 By default only localhost may access server.  Use the ``-a`` and ``-d``
-options to control server access privileges.  Use ``-a all`` to allow
-access to all clients.
+options to provide lists of client IPs that are allowed and denied access
+to the server.  Use ``-a all`` to allow access to all clients.
 
 The denied client list overrides the allowed client list.
 
