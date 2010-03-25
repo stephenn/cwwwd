@@ -864,12 +864,6 @@ class ServerConfig(object):
             Order deny,allow
             Allow from all
         </Directory>
-        
-        <Directory "/Users/snorum/Desktop">
-            Options ExecCGI
-            Order deny,allow
-            Allow from all
-        </Directory>
         '''
         
         for k, s in apache2_files.iteritems():
