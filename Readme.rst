@@ -78,6 +78,8 @@ By default only localhost may access server.  Use the ``-a`` and ``-d``
 options to control server access privileges.  Use ``-a all`` to allow
 access to all clients.
 
+The denied client list overrides the allowed client list.
+
 
 Example
 ~~~~~~~
