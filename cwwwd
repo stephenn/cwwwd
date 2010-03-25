@@ -1,0 +1,886 @@
+#!/usr/bin/env python
+"""
+handy HTTP server
+
+Starts an HTTP server using your current working directory as the
+server's default root directory.  Provides automatic directory
+listings.
+"""
+
+from __future__ import division
+
+import cgitb
+import cgi
+
+import os
+import sys
+import optparse
+import math
+import threading
+import subprocess
+import textwrap
+import tempfile
+import signal
+import datetime
+import shutil
+import bz2
+import base64
+
+import urllib
+import mimetypes
+import socket
+import BaseHTTPServer
+
+__version__ = '1.0'
+__author__ = 'Stephen Norum <stephen@mybunnyhug.org>'
+
+verbose = False
+loud = True
+doc_root = ''
+
+clients = {'authorized': ['127.0.0.1',],
+           'unauthorized': []}
+
+
+def stop_apache2(temp_dir_path): 
+    global verbose
+       
+    # Stop the daemon
+    args = ['httpd',
+            '-d', temp_dir_path,
+            '-f', 'conf/httpd.conf',
+            '-k', 'stop']
+
+    if verbose:
+        print ' '.join(args)
+            
+    print 'Stopping server'
+    p = subprocess.Popen(args)
+    p.wait()
+    
+    # Remove temporary directory
+    try:
+        shutil.rmtree(temp_dir_path)
+    except OSError as e:
+        pass
+
+    print 'Finished'
+
+
+def start_apache2(port):
+    global doc_root, clients, index_style, verbose
+    
+    # Create temp dir for apache2 files
+    temp_dir_path = tempfile.mkdtemp(prefix='cwwwd_apache2_')
+
+    if verbose:
+        print 'Created temp directory:', temp_dir_path
+    
+    for sub_dir in ('__cwwwd__', 'conf', '__cwwwd_cgi__'):
+        os.mkdir(os.path.join(temp_dir_path, sub_dir))
+            
+    # Configure custom config file
+    if clients['authorized']:
+        clients['authorized'].insert(0, '')
+        allow_from = '\n    Allow from '.join(clients['authorized'])
+    else:
+        allow_from = '\n'
+    
+    if clients['unauthorized']:
+        clients['unauthorized'].insert(0, '')
+        deny_from = '\n    Deny from '.join(clients['unauthorized'])
+    else:
+        deny_from = '\n'
+
+    apache2_files = ServerConfig.apache2()
+    apache2_files['conf/custom.conf'] = apache2_files['conf/custom.conf'].format(
+        port=port,
+        doc_root=escape_path(doc_root),
+        temp_dir=escape_path(temp_dir_path),
+        allow_from=allow_from,
+        deny_from=deny_from
+    )
+    
+    # Write the apache2 files
+    for file_name, contents in apache2_files.iteritems():
+        f_path = os.path.join(temp_dir_path, file_name)
+        with open(f_path, 'w') as f:
+            f.write(contents)
+    
+    # Create a symbolic link of this file to temp/cgi/cwwwd.py
+    cgi_cwwwd_path = os.path.join(temp_dir_path, '__cwwwd_cgi__', 'cwwwd.py')
+    os.symlink(__file__, cgi_cwwwd_path)
+    os.chmod(cgi_cwwwd_path, 0555)
+        
+    # Build arg list
+    args = [
+        'httpd',
+        '-d', temp_dir_path,
+        '-f', 'conf/httpd.conf',
+        '-k', 'start',
+        '-C', 'Include "{0}"'.format(escape_path(os.path.join(temp_dir_path, 'conf/custom.conf')))
+    ]
+    
+    if verbose:
+        print 'httpd command: ', ' '.join(args)
+    
+    print 'Starting server on port', port
+    p = subprocess.Popen(args)    
+    try:
+        p.wait()
+        response = raw_input('\n-- Press Enter To Stop Server --\n')
+    except KeyboardInterrupt:
+        pass
+    finally:
+        stop_apache2(temp_dir_path)
+
+
+def request_authorization(client_ip, default='n'):
+    global loud
+    msg = ('===================================================\n'
+           'Warning: {0} is unauthorized.\n'
+           '         Authorize access for this client (y/N)? ')
+    
+    if loud:
+        print '\a'
+
+    try:
+        response = raw_input(msg.format(client_ip))
+    except KeyboardInterrupt:
+        response = default
+    if not response:
+        response = default
+    return (response.lower()[0] == 'y')
+
+
+## {{{ http://code.activestate.com/recipes/473878/ (r1)
+def timeout(func, args=(), kwargs={}, timeout_duration=1, default=None):
+    class InterruptableThread(threading.Thread):
+        def __init__(self):
+            threading.Thread.__init__(self)
+            self.result = None
+
+        def run(self):
+            try:
+                self.result = func(*args, **kwargs)
+            except:
+                self.result = default
+    it = InterruptableThread()
+    it.start()
+    it.join(timeout_duration)
+    if it.isAlive():
+        return default
+    else:
+        return it.result
+## end of http://code.activestate.com/recipes/473878/ }}}
+        
+
+def next_open_port(start_port=8080, max_port=100):
+    for port in xrange(start_port, max_port + 1):
+        s = socket.socket()
+        try:
+            s.bind(('localhost', port))
+        except socket.error:
+            continue
+        finally:
+            s.close()
+        return port
+    return None
+
+
+class HttpRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.handle_request():
+            self.send_file = True
+            self.serve_request()
+        else:
+            self.send_error(401)
+    
+    def do_HEAD(self):
+        if self.handle_request():
+            self.send_file = False
+            self.serve_request()
+        else:
+            self.send_error(401)
+    
+    def handle_request(self):
+        global doc_root, clients
+        (self.parsed_path, self.parsed_query) = parse_request_uri(self.path)
+        self.doc_path = os.path.abspath(os.path.join(doc_root, self.parsed_path))
+        client_str = '{0[0]}:{0[1]}'.format(self.client_address)
+
+        log_fmt = ('Client: "%s", '
+                   'Request for: "%s", '
+                   'Parsed path: "%s", '
+                   'Serving: "%s"')
+        self.log_message(log_fmt, client_str, self.path, self.parsed_path, self.doc_path)
+        
+        client_ip = str(self.client_address[0])
+        
+        client_in_allowed_list = (
+            'all' in clients['authorized'] or
+            True in (client_ip.startswith(ip) for ip in clients['authorized'])
+        )
+        
+        client_in_denied_list = (
+            client_ip in clients['unauthorized'] or 
+            'all' in clients['unauthorized']
+        )
+        
+        if client_in_denied_list:
+            return False
+        elif not client_in_allowed_list:
+            allow = timeout(request_authorization, (client_ip,), timeout_duration=5, default=False)
+            if allow:
+                clients['authorized'].append(client_ip)
+            else:
+                clients['unauthorized'].append(client_ip)
+                return False
+        
+        if os.path.commonprefix((doc_root, self.doc_path)) != doc_root:
+            return False
+        
+        return True
+    
+    def serve_request(self):    
+        if self.parsed_path == 'favicon.ico':
+            self.serve_favicon()
+            return
+
+        if not os.path.exists(self.doc_path):
+            error_msg = 'File not found: {0}'.format(self.path)
+            self.send_error(404, error_msg)
+            return
+        
+        if os.path.isfile(self.doc_path):
+            self.serve_file(self.parsed_path, self.doc_path)
+            return
+        
+        if os.path.isdir(self.doc_path):
+            self.serve_dir_index(self.parsed_path, self.doc_path)
+            return
+    
+    def serve_favicon(self):
+        self.send_response(200)
+        self.send_header('Content-Type', 'image/x-icon')
+        self.end_headers()
+        if self.send_file:
+            self.wfile.write(ServerConfig.favicon())
+    
+    def serve_file(self, path, local_path):
+        (mime_type, encoding) = mimetypes.guess_type(local_path)
+        file_size = os.path.getsize(local_path)
+        self.log_message('Content-Type: {0}'.format(mime_type))
+        self.log_message('Content-Encoding: {0}'.format(encoding))
+        self.log_message('Content-Length: {0}'.format(file_size))
+
+        self.send_response(200)
+        self.send_header('Content-Type', mime_type if mime_type else ServerConfig.default_mime_type())
+        self.send_header('Content-Length', file_size)
+        if encoding:
+            self.send_header('Content-Encoding', encoding)
+        self.end_headers()
+
+        if self.send_file:
+            try:
+                with open(local_path) as f:
+                    self.wfile.write(f.read())
+            except IOError:
+                pass
+    
+    def serve_dir_index(self, path, local_path):
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/html')
+        self.end_headers()
+        
+        if not self.send_file:
+            return
+        
+        self.wfile.write(directory_listing(path, local_path))
+
+
+def append_ips(dest, *new_ips):
+    for ip in new_ips:
+        if ip:
+            dest.append(ip)
+
+
+def escape_path(path):
+    path = path.replace('\\', '\\\\')
+    path = path.replace('"', '\\"')
+    return path
+
+
+def si_prefix(value):
+    value = float(value if value > 0 else 0)
+    prefixes = ['y', 'z', 'a', 'f', 'p', 'n', '&micro;', 'm', # 0-7
+                '',                                           # 8
+                'k', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']       # 9-16
+    if value:            
+        power = math.log(value, 10)
+        si_power = (power // 3) * 3
+        value = value / (10 ** si_power)
+        prefix = prefixes[int(si_power // 3) + 8]
+    else:
+        prefix = prefixes[8]
+    
+    return (value, prefix)
+
+
+def parse_request_uri(req_uri):
+    (path, sep, query) = req_uri.partition('?')
+    path = urllib.url2pathname(path).strip('/')
+
+    return (path, query)
+
+
+# From http://wiki.python.org/moin/EscapingHtml
+def html_escape(text):
+    html_escape_table = {
+        "&": "&amp;",
+        '"': "&quot;",
+        "'": "&apos;",
+        ">": "&gt;",
+        "<": "&lt;",
+    }
+    return ''.join(html_escape_table.get(c,c) for c in text)
+
+
+def directory_listing(path, local_path):
+    # Gather directory information
+    file_names = (p for p in os.listdir(local_path) if not p.startswith('.'))
+    dir_contents = []
+    for file_name in file_names:
+        file_info = {}
+        file_path = os.path.join(local_path, file_name)
+        
+        # Make title
+        file_info['text'] = html_escape(file_name)
+        file_info['title'] = file_info['text'].replace('"', '&quot;')
+        
+        # Make link
+        file_info['uri'] = '/'.join((path, file_name)).strip('/')
+        file_info['uri'] = urllib.quote(file_info['uri'])
+
+        # Get modification timestamp
+        file_info['last_mod_ts'] = os.path.getmtime(file_path)
+        d = datetime.datetime.fromtimestamp(file_info['last_mod_ts'])
+        file_info['last_mod_str'] = d.strftime('%Y-%m-%d %H:%M')
+        
+        # Get size and type
+        if os.path.isdir(file_path):
+            file_info['is_dir']   = True
+            file_info['size']     = 0
+            file_info['size_str'] = ('&ndash;', '')
+            file_info['type']     = 'directory'
+            file_info['uri']     += '/'
+            file_info['title']   += '/'
+        else:
+            file_info['is_dir']   = False
+            file_info['size']     = os.path.getsize(file_path)
+            si                    = list(si_prefix(file_info['size']))
+            file_info['size_str'] = ('{0:.1f}'.format(si[0]), si[1] + 'B')
+            file_info['type']     = mimetypes.guess_type(file_path)[0]
+            if not file_info['type']:
+                file_info['type'] = ServerConfig.default_mime_type()
+
+        dir_contents.append(file_info)
+    
+    # Generate HTML
+    output = []
+    title = 'Index of /{0}'.format(html_escape(path))
+    
+    output.append(textwrap.dedent(
+        """
+        <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+        <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+
+        <head>
+        """)[1:]
+    )
+    output.append('<title>{title}</title>'.format(title=title))
+    output.append(ServerConfig.style())
+    output.append('<div id="header"><h1>{0}</h1></div>\n'.format(title))
+    output.append('<div id="listdir">\n')
+    
+    if dir_contents:
+        output.append('<table cellpadding=0 cellspacing=0 width="100%">\n')
+        output.append('    <tr id="headerrow">'
+                      '<th class="col_name">Name</th>'
+                      '<th class="col_lmod">Last Modified</th>'
+                      '<th class="col_fshd" colspan="2">Size</th>'
+                      '<th class="col_type">Type</th>'
+                      '</tr>\n')
+        case_insensitive_compare = lambda x,y: cmp(x['title'].lower(), y['title'].lower())
+        for item in sorted(dir_contents, cmp=case_insensitive_compare):                
+            output.append('    <tr>')
+            output.append('<td class="col_name"><a href="/{0[uri]}" title="{0[title]}">{0[title]}</a></td>'.format(item))
+            output.append('<td class="col_lmod">{0[last_mod_str]}</td>'.format(item))
+            output.append('<td class="col_fsvl" >{0[0]}</td>'
+                          '<td class="col_fsut">&nbsp;{0[1]}</td>'.format(item['size_str']))
+            output.append('<td class="col_type">{0[type]}</td>'.format(item))
+            output.append('</tr>\n')
+        output.append('</table>\n')
+    else:
+        output.append('<div id="empty">Empty</div>\n')
+    
+    if path:
+        output.append('<div id="up_link">')
+        output.append('<a href="/{0}/..">Parent Directory</a>\n'.format(urllib.quote(path)))
+        output.append('</div>')
+        
+    output.append('</div>\n')
+    output.append('<div id="footer">\n')
+    output.append('&nbsp;</div>\n')        
+    output.append(textwrap.dedent("""
+    </body>
+    </html>
+    """))
+    
+    return ''.join(output)
+
+
+def apache2_directory_listing():
+    print "Content-type: text/html"
+    print        
+    doc_root = os.environ['DOCUMENT_ROOT']
+    (path, query) = parse_request_uri(os.environ['REQUEST_URI'])
+    local_path = os.path.join(doc_root, path)
+    print directory_listing(path, local_path)
+    
+
+class CwwdOptParser(optparse.OptionParser):
+    def format_epilog(self, formatter):
+        '''
+        return raw epilog
+        '''
+        return self.epilog
+
+
+def process_options(argv=None):
+    usage = '%prog [options]'
+    version = '%prog {version}'.format(version=__version__)
+
+    parser = CwwdOptParser(usage=usage, version=version)
+
+    parser.add_option('-v', default=False,
+                      action='store_true', dest='verbose',
+                      help='produce verbose output')
+    parser.add_option('-q', default=False,
+                      action='store_true', dest='quiet',
+                      help='suppress system beep')
+    default=8080
+    parser.add_option('-p', default=default,
+                      action='store', type='int', dest='start_port', metavar='PORT',
+                      help='search for free port starting at PORT (default: {0})'.format(default))
+    default=100
+    parser.add_option('-m', default=default,
+                      action='store', type='int', dest='max_port', metavar='MAX',
+                      help='search MAX number of ports for a free port (default: {0})'.format(default))
+    parser.add_option('-a', default='',
+                      action='store', type='string', dest='allow', metavar='HOSTS',
+                      help='allow server access to comma-separated HOSTS'.format(default))
+    parser.add_option('-d', default='',
+                      action='store', type='string', dest='deny', metavar='HOSTS',
+                      help='deny server access to comma-separated HOSTS'.format(default))
+    parser.add_option('-r',
+                      action='store', type='string', dest='doc_root', metavar='DIR',
+                      help='use DIR for document root instead of cwd')
+    default='apache2'
+    parser.add_option('-s', default=default,
+                      action='store', type='string', dest='server', metavar='SRVR',
+                      help='server "internal" or "apache2" (default: {0})'.format(default))
+    
+    parser.epilog = (textwrap.dedent(
+        '''
+        
+        Access Control
+        --------------
+        By default only localhost may access server.  Use the -a and -d options to
+        control server access.  Use -a all to allow access to all hosts.
+        
+        When using the apache2 server, domain names may also be used with these
+        options.
+        
+        
+        Examples
+        --------
+        Example:
+        Allow anyone from the partial IP address 192.168 while denying access to
+        192.168.0.10
+        
+        cwwwd -a 192.168 -d 192.168.0.10
+        
+        Example:
+        Allow everyone but IP addresses 192.168.0.10 and 192.168.0.11
+        
+        cwwwd -a all -d 192.168.0.10,192.168.0.11
+        
+        ''')
+    )
+    
+    if argv is None:
+        argv = sys.argv[1:]
+
+    (options, args) = parser.parse_args(argv)
+
+    if not options.doc_root:
+        options.doc_root = os.curdir
+ 
+    return (options, args)
+
+
+def main(argv=None):
+    global doc_root, loud, verbose
+    
+    # Print the directory listing if this is called as cgi
+    if os.environ.get('REQUEST_URI'):
+        cgitb.enable()
+        apache2_directory_listing()
+        sys.exit(1)
+    
+    (options, args) = process_options()
+    
+    verbose = options.verbose
+    loud = not options.quiet
+    doc_root = os.path.abspath(options.doc_root)
+    port = next_open_port(options.start_port, options.start_port + options.max_port)
+    
+    if not port:
+        sys.stderr.write('Error: no open ports in range '
+                         '{0} to {1}.\n'.format(options.start_port, options.start_port + options.max_port))
+        return 1
+    
+    append_ips(clients['authorized'], *(options.allow.split(',')))
+    append_ips(clients['unauthorized'], *(options.deny.split(',')))
+    
+    if options.server == 'internal':
+        print 'Starting Internal HTTP server on port', port
+        print
+        print '-- Type Control-C To Stop Server --'
+        try:
+            server = BaseHTTPServer.HTTPServer(('', port), HttpRequestHandler)
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.socket.close()
+    elif options.server == 'apache2':
+        start_apache2(port)
+
+    return 0
+
+
+##########################################################################################
+##########################################################################################
+##
+##  Server Configuration
+##
+##########################################################################################
+##########################################################################################
+
+
+class ServerConfig(object):
+    _favicon = None
+    _apache2 = None
+    _style   = None
+    
+    @classmethod
+    def default_mime_type(cls):
+        return 'application/octet-stream'
+    
+    @classmethod
+    def style(cls):
+        if ServerConfig._style:
+            return ServerConfig._style
+        
+        ServerConfig._style = textwrap.dedent(
+        '''
+        <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            color: #555;
+        }
+        body, tr, th {
+            font: 16px Helvetica;
+        }
+        a {
+            text-decoration: none;
+            color: #555;
+        }
+        a:visited {
+            color: #bbb;
+        }
+        a:hover {
+            text-decoration: underline;
+            color: #f20;
+        }
+        h1 {
+            position: relative;
+            margin: 0;
+            padding: 0.5em 0 0.5em 100px;
+            color: #c5c5c5;
+            background: #eee;
+        }
+        #header {
+            width: 100%;
+            overflow: hidden;
+            position: relative;
+        }
+        td, th, #empty {
+            padding: 3px 0;
+        }
+        td, th {
+            text-align: center;
+        }
+        .col_type {
+            text-align:left;
+            width:17em;
+        }
+        .col_name {
+            padding-left: 100px;
+            text-align: left;
+            text-overflow: ellipsis;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .col_lmod {
+            width: 10em;
+            overflow: hidden;
+            white-space: nowrap;
+        }
+        .col_fshd {
+            width:11em;
+        }
+        .col_fsvl {
+            padding-right:0;
+            text-align:right;
+        }
+        .col_fsut {
+            padding-left:0;
+            text-align:left;
+        }
+        #empty, th {
+            font-weight: bold;
+            color:#666;
+            background:#ddd;
+        }
+        table {
+            margin:0;
+            border-collapse: collapse;
+            table-layout:fixed;
+        }
+        tr#headerrow {
+        }
+        .center_header {
+            text-align:center;
+        }
+        #listdir {
+            margin:0;
+            padding: 0 0 10px 0;
+        }
+        #footer {
+            color: #bbb;
+            padding:0;         
+            margin:10px 0;
+        }
+        #footer a {
+            color:#bbb;
+        }
+        #empty {
+            padding-left: 100px;
+        }
+        #up_link {
+            margin-top: 1em;
+            padding-left: 100px;
+        }
+        tr:hover {
+            background:#eee;
+        }
+        </style>
+        </head>
+        <body>
+        ''')
+        return ServerConfig._style
+    
+    @classmethod
+    def favicon(cls):
+        if ServerConfig._favicon:
+            return ServerConfig._favicon
+
+        favicon_bz2_b64 = '''
+        QlpoOTFBWSZTWTrmtEUAAEb/WP/wVWBBQABAQAIBAABAQAEAQAABAAiwAOygSmSK
+        NNHigHqADGAAAAAEmlKm9SYBBtENPRjUJMRixSKRBqPEEl+V5san3Ri0tWW1Qz7Z
+        645YJqcO+wOKskmjA53TGWQ1ZyGIyHZkulb9mAk0EOyAD8lCbWQoyZQiMEgYRMID
+        mhqEtux56DrnsMvncP1Su/jOGbkPxM89qGOMCESgUlK0ZKMiJL5aHn/wTE1tiDP1
+        KDERIozww1TCbrawO4InU9C7kinChIHXNaIo
+        '''
+        
+        ServerConfig._favicon = bz2.decompress(base64.b64decode(favicon_bz2_b64))   
+        return ServerConfig._favicon
+    
+    @classmethod
+    def apache2(cls):
+        if ServerConfig._apache2:
+            return ServerConfig._apache2
+    
+        apache2_files = {}    
+        apache2_files['conf/httpd.conf'] = r'''
+        LockFile accept.lock
+        PidFile httpd.pid
+        ErrorLog error.log
+        
+        LoadModule authn_file_module /usr/libexec/apache2/mod_authn_file.so
+        LoadModule authn_dbm_module /usr/libexec/apache2/mod_authn_dbm.so
+        LoadModule authn_anon_module /usr/libexec/apache2/mod_authn_anon.so
+        LoadModule authn_dbd_module /usr/libexec/apache2/mod_authn_dbd.so
+        LoadModule authn_default_module /usr/libexec/apache2/mod_authn_default.so
+        LoadModule authz_host_module /usr/libexec/apache2/mod_authz_host.so
+        LoadModule authz_groupfile_module /usr/libexec/apache2/mod_authz_groupfile.so
+        LoadModule authz_user_module /usr/libexec/apache2/mod_authz_user.so
+        LoadModule authz_dbm_module /usr/libexec/apache2/mod_authz_dbm.so
+        LoadModule authz_owner_module /usr/libexec/apache2/mod_authz_owner.so
+        LoadModule authz_default_module /usr/libexec/apache2/mod_authz_default.so
+        LoadModule auth_basic_module /usr/libexec/apache2/mod_auth_basic.so
+        LoadModule auth_digest_module /usr/libexec/apache2/mod_auth_digest.so
+        LoadModule cache_module /usr/libexec/apache2/mod_cache.so
+        LoadModule disk_cache_module /usr/libexec/apache2/mod_disk_cache.so
+        LoadModule mem_cache_module /usr/libexec/apache2/mod_mem_cache.so
+        LoadModule dbd_module /usr/libexec/apache2/mod_dbd.so
+        LoadModule dumpio_module /usr/libexec/apache2/mod_dumpio.so
+        LoadModule ext_filter_module /usr/libexec/apache2/mod_ext_filter.so
+        LoadModule include_module /usr/libexec/apache2/mod_include.so
+        LoadModule filter_module /usr/libexec/apache2/mod_filter.so
+        LoadModule substitute_module /usr/libexec/apache2/mod_substitute.so
+        LoadModule deflate_module /usr/libexec/apache2/mod_deflate.so
+        LoadModule log_config_module /usr/libexec/apache2/mod_log_config.so
+        LoadModule log_forensic_module /usr/libexec/apache2/mod_log_forensic.so
+        LoadModule logio_module /usr/libexec/apache2/mod_logio.so
+        LoadModule env_module /usr/libexec/apache2/mod_env.so
+        LoadModule mime_magic_module /usr/libexec/apache2/mod_mime_magic.so
+        LoadModule cern_meta_module /usr/libexec/apache2/mod_cern_meta.so
+        LoadModule expires_module /usr/libexec/apache2/mod_expires.so
+        LoadModule headers_module /usr/libexec/apache2/mod_headers.so
+        LoadModule ident_module /usr/libexec/apache2/mod_ident.so
+        LoadModule mime_module /usr/libexec/apache2/mod_mime.so
+        LoadModule autoindex_module /usr/libexec/apache2/mod_autoindex.so
+        LoadModule asis_module /usr/libexec/apache2/mod_asis.so
+        LoadModule info_module /usr/libexec/apache2/mod_info.so
+        LoadModule cgi_module /usr/libexec/apache2/mod_cgi.so
+        LoadModule dir_module /usr/libexec/apache2/mod_dir.so
+        LoadModule actions_module /usr/libexec/apache2/mod_actions.so
+        LoadModule alias_module /usr/libexec/apache2/mod_alias.so
+        
+        <IfModule !mpm_netware_module>
+        <IfModule !mpm_winnt_module>
+        #
+        # If you wish httpd to run as a different user or group, you must run
+        # httpd as root initially and it will switch.  
+        #
+        # User/Group: The name (or #number) of the user/group to run httpd as.
+        # It is usually good practice to create a dedicated user and group for
+        # running httpd, as with most system services.
+        #
+        User _www
+        Group _www
+        
+        </IfModule>
+        </IfModule>
+        
+        <Directory />
+            Options FollowSymLinks
+            AllowOverride None
+            Order deny,allow
+            Deny from all
+        </Directory>
+        
+        <IfModule log_config_module>
+            LogFormat "%h %l %u %t \"%r\" %>s %b" common
+            CustomLog access.log common
+        </IfModule>
+        
+        DefaultType application/octet-stream
+        <IfModule mime_module>
+            #
+            # TypesConfig points to the file containing the list of mappings from
+            # filename extension to MIME-type.
+            #
+            TypesConfig /private/etc/apache2/mime.types
+        
+            #
+            # AddType allows you to add to or override the MIME configuration
+            # file specified in TypesConfig for specific file types.
+            #
+            #AddType application/x-gzip .tgz
+            #
+            # AddEncoding allows you to have certain browsers uncompress
+            # information on the fly. Note: Not all browsers support this.
+            #
+            #AddEncoding x-compress .Z
+            #AddEncoding x-gzip .gz .tgz
+            #
+            # If the AddEncoding directives above are commented-out, then you
+            # probably should define those extensions to indicate media types:
+            #
+            AddType application/x-compress .Z
+            AddType application/x-gzip .gz .tgz
+        </IfModule>
+        
+        AddHandler cgi-script .py
+        '''
+        
+        apache2_files['conf/custom.conf'] = r'''
+        Listen {port}
+        DocumentRoot "{doc_root}"
+        Alias /__cwwwd__      "{temp_dir}/__cwwwd__"
+        Alias /favicon.ico    "{temp_dir}/__cwwwd__/favicon.ico"
+        Alias /__cwwwd_cgi__  "{temp_dir}/__cwwwd_cgi__"
+        
+        <Directory "{doc_root}">
+            Options FollowSymLinks MultiViews
+            AllowOverride All
+            Order allow,deny
+            {allow_from}
+            {deny_from}
+            
+            DirectoryIndex /__cwwwd_cgi__/cwwwd.py    
+        </Directory>
+        
+        <Directory "{temp_dir}">
+            Order allow,deny
+            Deny from all
+        </Directory>
+        
+        <Directory "{temp_dir}/__cwwwd__">
+            Order deny,allow
+            Allow from all
+        </Directory>
+        
+        <Directory "{temp_dir}/__cwwwd_cgi__">
+            Options FollowSymLinks ExecCGI
+            Order deny,allow
+            Allow from all
+        </Directory>
+        
+        <Directory "/Users/snorum/Desktop">
+            Options ExecCGI
+            Order deny,allow
+            Allow from all
+        </Directory>
+        '''
+        
+        for k, s in apache2_files.iteritems():
+            apache2_files[k] = textwrap.dedent(s)        
+    
+        apache2_files['__cwwwd__/favicon.ico'] = ServerConfig.favicon()
+        ServerConfig._apache2 = apache2_files
+        return ServerConfig._apache2
+        
+    
+if __name__ == '__main__':
+    status = main()
+    sys.exit(status)
+
