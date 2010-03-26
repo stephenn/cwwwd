@@ -36,9 +36,7 @@ Example::
     $ cd Movies
     $ cwwwd
     Starting server on port 8080
-
-    -- Press Enter To Stop Server --
-
+    ...
 
 Options
 -------

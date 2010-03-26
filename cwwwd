@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 r"""
-a handy web server
+cwwwd -- a handy web server
+============================
  
 About
 -----
@@ -37,9 +38,7 @@ Example::
     $ cd Movies
     $ cwwwd
     Starting server on port 8080
-
-    -- Press Enter To Stop Server --
-
+    ...
 
 Options
 -------
@@ -50,8 +49,8 @@ By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
 installed on your computer, no problem!  cwwwd comes with its own internal
 HTTP server.
 
-Specify which server to use with the the ``-s`` option, providing it either
-``internal`` or ``apache2`` values.
+Specify which server to use with the the ``-s`` option with either
+``internal`` or ``apache2``.
 
 
 Listen Port
@@ -189,9 +188,9 @@ def start_apache2(port):
         with open(f_path, 'w') as f:
             f.write(contents)
     
-    # Create a symbolic link of this file to temp/cgi/cwwwd.py
+    # Copy this file to temp/cgi/cwwwd.py
     cgi_cwwwd_path = os.path.join(temp_dir_path, '__cwwwd_cgi__', 'cwwwd.py')
-    os.symlink(__file__, cgi_cwwwd_path)
+    shutil.copyfile(__file__, cgi_cwwwd_path)
     os.chmod(cgi_cwwwd_path, 0555)
         
     # Build arg list
@@ -209,7 +208,7 @@ def start_apache2(port):
     try:
         p = subprocess.Popen(args)
 
-        print 'Starting server on port', port
+        print_server_info(port)
 
         p.wait()
         response = raw_input('\n-- Press Enter To Stop Server --\n')
@@ -393,6 +392,45 @@ class HttpRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         
         self.wfile.write(directory_listing(path, local_path))
 
+
+def compare_ip(x, y):    
+    for c in (cmp(*n) for n in map(None, x.split('.'), y.split('.'))):
+        if c:
+            return c
+    return 0
+
+
+def server_urls(port):
+    hostname = socket.gethostname()
+    (name, aliaslist, addresslist) = socket.gethostbyname_ex(hostname)
+    
+    addr_format = 'http://{{0}}:{0}'.format(port)
+    
+    urls = []
+    
+    if name:
+        urls.append(addr_format.format(name))
+
+    if aliaslist:
+        aliaslist.sort()
+        urls.extend((addr_format.format(alias) for alias in aliaslist))
+
+    if addresslist:
+        addresslist.sort(cmp=compare_ip)
+        urls.extend((addr_format.format(addr) for addr in addresslist))
+    
+    return urls
+
+
+def print_server_info(port):
+    print 'Starting server on port', port
+    print
+    print 'Connect to server at one of:'
+    print
+    
+    for url in server_urls(port):
+        print '   ', url
+    
 
 def append_ips(dest, *new_ips):
     for ip in new_ips:
@@ -794,7 +832,7 @@ def main(argv=None):
     append_ips(clients['unauthorized'], *deny_ips)
     
     if options.server == 'internal':
-        print 'Starting Internal HTTP server on port', port
+        print_server_info(port)
         print
         print '-- Type Control-C To Stop Server --'
         try:
