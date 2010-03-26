@@ -40,6 +40,14 @@ Example::
     Starting server on port 8080
     ...
 
+Note that cwwwd allows access to localhost *only* by default.  To open
+access to all clients, use the ``-a all`` option.
+
+::
+    
+    $ cwwwd -a all
+
+
 Options
 -------
 
@@ -692,19 +700,11 @@ def install():
     return 0
 
 
-class CwwdOptParser(optparse.OptionParser):
-    def format_epilog(self, formatter):
-        '''
-        return dedented only epilog
-        '''
-        return textwrap.dedent(self.epilog)
-
-
 def process_options(argv=None):
-    usage = '%prog [options]'
+    usage = '%prog [install | help] [options]'
     version = '%prog {version}'.format(version=__version__)
 
-    parser = CwwdOptParser(usage=usage, version=version)
+    parser = optparse.OptionParser(usage=usage, version=version)
 
     parser.add_option('-v', default=False,
                       action='store_true', dest='verbose',
@@ -734,55 +734,6 @@ def process_options(argv=None):
                       action='store', type='string', dest='server', metavar='SRVR',
                       help='server "internal" or "apache2" (default: {0})'.format(default))
     
-    parser.epilog = (
-        '''
-        
-        Server Type
-        ~~~~~~~~~~~
-        By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
-        installed on your computer, no problem!  cwwwd comes with its own internal
-        HTTP server.
-        
-        Specify which server to use with the the ``-s`` option, providing it either
-        ``internal`` or ``apache2`` values.
-        
-        
-        Listen Port
-        ~~~~~~~~~~~
-        cwwwd attempts to listen for traffic on the first free port between 8080
-        and 8179.  To change this range, use the options ``-p``, the start port,
-        and ``-m``, the maximum number of ports to search.
-        
-        
-        Access Control
-        ~~~~~~~~~~~~~~
-        By default only localhost may access server.  Control who is allowed and
-        denied access to your server by providing comma-separated lists of IPs to
-        the ``-a`` and ``-d`` options.  Use ``-a all`` to allow access to all
-        clients.
-        
-        The denied client list overrides the allowed client list.
-        
-        
-        Example
-        ~~~~~~~
-        Start cwwwd using:
-        
-        1. the internal server, 
-        2. the first free port between 9001 to 9010,
-        3. your home directory as the document root,
-        4. allowing access to everyone with IP address starting with 192.168 or
-           the specific IP, 64.202.189.170
-        5. but denying access to IP addresses 192.168.0.10 and 192.168.0.11
-                
-            $ cwwwd -s internal                  \
-                    -p 9001 -m 10                \
-                    -r ~/                        \
-                    -a 192.168,64.202.189.170    \
-                    -d 192.168.0.10,192.168.0.11
-        '''
-    )
-    
     if argv is None:
         argv = sys.argv[1:]
 
@@ -808,6 +759,13 @@ def main(argv=None):
     try:
         if args[0] == 'install':
             return install()
+    except IndexError:
+        pass
+    
+    try:
+        if args[0] == 'help':
+            print __doc__
+            return 0
     except IndexError:
         pass
     

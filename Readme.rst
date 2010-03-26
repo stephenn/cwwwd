@@ -38,6 +38,14 @@ Example::
     Starting server on port 8080
     ...
 
+Note that cwwwd allows access to localhost *only* by default.  To open
+access to all clients, use the ``-a all`` option.
+
+::
+    
+    $ cwwwd -a all
+
+
 Options
 -------
 
