@@ -1,10 +1,100 @@
 #!/usr/bin/env python
-"""
-handy HTTP server
+r"""
+a handy web server
+ 
+About
+-----
 
-Starts an HTTP server using your current working directory as the
-server's default root directory.  Provides automatic directory
+cwwwd starts a web server using your current working directory as the
+server's default document root and also provides automatic directory
 listings.
+
+The application was created to simplify file sharing with network
+devices and computers.
+
+
+Installation
+------------
+
+In a terminal, go to the download folder containing cwwwd and type
+
+::
+
+    $ python cwwwd install
+
+Choose an installation directory by number from the provided list or
+press return to use the default directory.
+
+
+Usage
+-----
+
+1. In a terminal, go to the folder you want to make available over HTTP
+2. Type cwwwd and press return
+
+Example::
+
+    $ cd Movies
+    $ cwwwd
+    Starting server on port 8080
+
+    -- Press Enter To Stop Server --
+
+
+Options
+-------
+
+Server Type
+~~~~~~~~~~~
+By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
+installed on your computer, no problem!  cwwwd comes with its own internal
+HTTP server.
+
+Specify which server to use with the the ``-s`` option, providing it either
+``internal`` or ``apache2`` values.
+
+
+Listen Port
+~~~~~~~~~~~
+cwwwd attempts to listen for traffic on the first free port between 8080
+and 8179.  To change this range, use the options ``-p``, the start port,
+and ``-m``, the maximum number of ports to search.
+
+
+Access Control
+~~~~~~~~~~~~~~
+By default only localhost may access server.  Control who is allowed and
+denied access to your server by providing comma-separated lists of IPs to
+the ``-a`` and ``-d`` options.  Use ``-a all`` to allow access to all
+clients.
+
+The denied client list overrides the allowed client list.
+
+
+Example
+~~~~~~~
+Start cwwwd using:
+
+1. the internal server, 
+2. the first free port between 9001 to 9010,
+3. your home directory as the document root,
+4. allowing access to everyone with IP address starting with 192.168 or
+   the specific IP, 64.202.189.170
+5. but denying access to IP addresses 192.168.0.10 and 192.168.0.11
+
+::
+
+    $ cwwwd -s internal                  \
+            -p 9001 -m 10                \
+            -r ~/                        \
+            -a 192.168,64.202.189.170    \
+            -d 192.168.0.10,192.168.0.11
+
+
+Contact
+-------
+
+Stephen Norum (stephen@mybunnyhug.org)
 """
 
 from __future__ import division
@@ -57,14 +147,6 @@ def stop_apache2(temp_dir_path):
     print 'Stopping server'
     p = subprocess.Popen(args)
     p.wait()
-    
-    # Remove temporary directory
-    try:
-        shutil.rmtree(temp_dir_path)
-    except OSError as e:
-        pass
-
-    print 'Finished'
 
 
 def start_apache2(port):
@@ -123,16 +205,30 @@ def start_apache2(port):
     
     if verbose:
         print 'httpd command: ', ' '.join(args)
-    
-    print 'Starting server on port', port
-    p = subprocess.Popen(args)    
+        
     try:
+        p = subprocess.Popen(args)
+
+        print 'Starting server on port', port
+
         p.wait()
         response = raw_input('\n-- Press Enter To Stop Server --\n')
+    except OSError as e:
+        print e
+        print 'Try using internal server instead.  "cwwwd -s internal"'
     except KeyboardInterrupt:
         pass
     finally:
+        # Stop the server
         stop_apache2(temp_dir_path)
+        
+        # Remove temporary directory
+        try:
+            shutil.rmtree(temp_dir_path)
+        except OSError as e:
+            pass
+    
+        print 'Finished'
 
 
 def request_authorization(client_ip, default='n'):
@@ -153,7 +249,7 @@ def request_authorization(client_ip, default='n'):
     return (response.lower()[0] == 'y')
 
 
-## {{{ http://code.activestate.com/recipes/473878/ (r1)
+# From http://code.activestate.com/recipes/473878/
 def timeout(func, args=(), kwargs={}, timeout_duration=1, default=None):
     class InterruptableThread(threading.Thread):
         def __init__(self):
@@ -172,7 +268,6 @@ def timeout(func, args=(), kwargs={}, timeout_duration=1, default=None):
         return default
     else:
         return it.result
-## end of http://code.activestate.com/recipes/473878/ }}}
         
 
 def next_open_port(start_port=8080, max_port=100):
@@ -333,6 +428,27 @@ def parse_request_uri(req_uri):
 
     return (path, query)
 
+def validate_ip(ip):
+    if ip == 'all':
+        return ip
+
+    try:
+        parts = ip.split('.')
+        if not parts or len(parts) > 4:
+            raise Exception
+        try:
+            int_parts = (int(p) for p in parts)
+            int_parts = [p for p in int_parts if p >= 0 and p < 256]
+        except ValueError:
+            raise Exception
+        
+        if len(int_parts) != len(parts):
+            raise Exception
+    except Exception:
+        raise ValueError('Error: invalid IP "{0}"'.format(ip))
+        
+    
+    return ip    
 
 # From http://wiki.python.org/moin/EscapingHtml
 def html_escape(text):
@@ -450,12 +566,100 @@ def apache2_directory_listing():
     print directory_listing(path, local_path)
     
 
+def install():
+    '''
+    Copy self to a directory in the user's $PATH
+    '''
+    default_path = '/usr/local/bin'
+    
+    paths = os.environ['PATH'].split(':')
+    paths = [p for p in set(paths) if os.path.isdir(p)]    
+    paths.sort(cmp=lambda x,y: cmp(x.lower(), y.lower()))
+    
+    if not paths:
+        print 'Error: empty search path.'
+        print 'Installation cancelled.'
+        return 1
+    
+    if default_path not in paths:
+        default_path = paths[0]
+    
+    default_index = paths.index(default_path) + 1
+    default_str = ' (default: {0}, {1})'.format(default_index, default_path)
+    
+    print
+    title = 'Installation Directories'
+    print title
+    print '-' * len(title)
+    print
+    for i, p in enumerate(paths):
+        print '{0:4}) {1}'.format(i + 1, p)
+    print
+    
+    print 'Default: {0} ({1})'.format(default_index, default_path)
+    try:
+        inp = raw_input('Choose directory by number or press return for default: ')
+    except KeyboardInterrupt:
+        print '\nInstallation cancelled.'
+        return 0
+    print
+
+    if inp:
+        try:
+            index = int(inp) - 1
+            dst_dir = paths[index]
+        except (ValueError, IndexError) as e:
+            print 'Error: Invalid choice'
+            print 'Installation cancelled.'
+            return 1
+    else:
+        dst_dir = default_path
+        
+    dst = os.path.join(dst_dir, 'cwwwd')
+    src = __file__
+    
+    if os.path.exists(dst):
+        print 'Warning:', dst, 'already exists.'
+        
+        try:
+            inp = raw_input('Overwrite file [y/N]? ')
+        except KeyboardInterrupt:
+            inp = ''
+            
+        try:
+            if not inp[0].lower() == 'y':
+                raise IndexError
+        except IndexError:
+            print '\nInstallation cancelled.'
+            return 0
+        print
+
+    try:
+        print 'Installing cwwwd as', dst
+        shutil.copyfile(src, dst)
+        print 'Making cwwwd executable'
+        os.chmod(dst, 0755)
+    except shutil.Error:
+        pass
+    except (IOError, OSError) as e:
+        print 'Error: cannot write to', dst
+        print
+        print 'Try "sudo python cwwwd install"'
+        return 1
+    
+    print 'Done!'
+    print
+    print 'You can now run cwwwd from any directory by typing cwwwd'
+    
+    return 0
+
+
 class CwwdOptParser(optparse.OptionParser):
     def format_epilog(self, formatter):
         '''
-        return raw epilog
+        return dedented only epilog
         '''
-        return self.epilog
+        return textwrap.dedent(self.epilog)
 
 
 def process_options(argv=None):
@@ -492,32 +696,53 @@ def process_options(argv=None):
                       action='store', type='string', dest='server', metavar='SRVR',
                       help='server "internal" or "apache2" (default: {0})'.format(default))
     
-    parser.epilog = (textwrap.dedent(
+    parser.epilog = (
         '''
         
+        Server Type
+        ~~~~~~~~~~~
+        By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
+        installed on your computer, no problem!  cwwwd comes with its own internal
+        HTTP server.
+        
+        Specify which server to use with the the ``-s`` option, providing it either
+        ``internal`` or ``apache2`` values.
+        
+        
+        Listen Port
+        ~~~~~~~~~~~
+        cwwwd attempts to listen for traffic on the first free port between 8080
+        and 8179.  To change this range, use the options ``-p``, the start port,
+        and ``-m``, the maximum number of ports to search.
+        
+        
         Access Control
-        --------------
-        By default only localhost may access server.  Use the -a and -d options to
-        control server access.  Use -a all to allow access to all hosts.
+        ~~~~~~~~~~~~~~
+        By default only localhost may access server.  Control who is allowed and
+        denied access to your server by providing comma-separated lists of IPs to
+        the ``-a`` and ``-d`` options.  Use ``-a all`` to allow access to all
+        clients.
         
-        When using the apache2 server, domain names may also be used with these
-        options.
+        The denied client list overrides the allowed client list.
         
         
-        Examples
-        --------
-        Example:
-        Allow anyone from the partial IP address 192.168 while denying access to
-        192.168.0.10
+        Example
+        ~~~~~~~
+        Start cwwwd using:
         
-        cwwwd -a 192.168 -d 192.168.0.10
-        
-        Example:
-        Allow everyone but IP addresses 192.168.0.10 and 192.168.0.11
-        
-        cwwwd -a all -d 192.168.0.10,192.168.0.11
-        
-        ''')
+        1. the internal server, 
+        2. the first free port between 9001 to 9010,
+        3. your home directory as the document root,
+        4. allowing access to everyone with IP address starting with 192.168 or
+           the specific IP, 64.202.189.170
+        5. but denying access to IP addresses 192.168.0.10 and 192.168.0.11
+                
+            $ cwwwd -s internal                  \
+                    -p 9001 -m 10                \
+                    -r ~/                        \
+                    -a 192.168,64.202.189.170    \
+                    -d 192.168.0.10,192.168.0.11
+        '''
     )
     
     if argv is None:
@@ -538,9 +763,15 @@ def main(argv=None):
     if os.environ.get('REQUEST_URI'):
         cgitb.enable()
         apache2_directory_listing()
-        sys.exit(1)
-    
+        return 0
+        
     (options, args) = process_options()
+    
+    try:
+        if args[0] == 'install':
+            return install()
+    except IndexError:
+        pass
     
     verbose = options.verbose
     loud = not options.quiet
@@ -552,8 +783,15 @@ def main(argv=None):
                          '{0} to {1}.\n'.format(options.start_port, options.start_port + options.max_port))
         return 1
     
-    append_ips(clients['authorized'], *(options.allow.split(',')))
-    append_ips(clients['unauthorized'], *(options.deny.split(',')))
+    try:
+        allow_ips = [validate_ip(ip) for ip in options.allow.split(',') if ip]
+        deny_ips = [validate_ip(ip) for ip in options.deny.split(',') if ip]
+    except ValueError as e:
+        print e
+        return 1
+    
+    append_ips(clients['authorized'], *allow_ips)
+    append_ips(clients['unauthorized'], *deny_ips)
     
     if options.server == 'internal':
         print 'Starting Internal HTTP server on port', port
@@ -566,10 +804,13 @@ def main(argv=None):
             pass
         finally:
             server.socket.close()
+            return 0
     elif options.server == 'apache2':
         start_apache2(port)
-
-    return 0
+        return 0
+    
+    print 'Error: Invalid server type.  Server not started.'
+    return 1
 
 
 ##########################################################################################
