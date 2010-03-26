@@ -49,8 +49,8 @@ access to all clients, use the ``-a all`` option.
 Options
 -------
 
-Server Type
-~~~~~~~~~~~
+Server Type (``-s``)
+~~~~~~~~~~~~~~~~~~~~
 By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
 installed on your computer, no problem!  cwwwd comes with its own internal
 HTTP server.
@@ -59,21 +59,27 @@ Use the ``-s`` option with either ``internal`` or ``apache2`` to specify
 the server.
 
 
-Listen Port
-~~~~~~~~~~~
+Listen Port (``-p``, ``-m``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 cwwwd attempts to listen for traffic on the first free port between 8080
 and 8179.  To change this range, use the options ``-p``, the start port,
 and ``-m``, the maximum number of ports to search.
 
 
-Access Control
-~~~~~~~~~~~~~~
+Access Control (``-a``, ``-d``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 By default only localhost may access server.  Control who is allowed and
 denied access to your server by providing comma-separated lists of IPs to
 the ``-a`` and ``-d`` options.  Use ``-a all`` to allow access to all
 clients.
 
 The denied client list overrides the allowed client list.
+
+
+Document Root (``-r``)
+~~~~~~~~~~~~~~~~~~~~~~
+Use the specified document root instead of the default document root, the
+current working directory.
 
 
 Example
