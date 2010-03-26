@@ -15,30 +15,21 @@ devices and computers.
 Installation
 ------------
 
-1. In a terminal, go to the download folder containing cwwwd
+In a terminal, go to the download folder containing cwwwd and type
 
 ::
 
-    $ cd ~/Downloads
-    
-2. Copy cwwwd to a directory in your path
+    $ python cwwwd install
 
-::
-
-    $ cp cwwwd /usr/local/bin
-
-3. Make cwwwd executable
-
-::
-
-    $ chmod a+x /usr/local/bin/cwwwd
+Choose an installation directory by number from the provided list or
+press return to use the default directory.
 
 
 Usage
 -----
 
 1. In a terminal, go to the folder you want to make available over HTTP
-2. Type cwwwd and hit return
+2. Type cwwwd and press return
 
 Example::
 
@@ -58,8 +49,8 @@ By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
 installed on your computer, no problem!  cwwwd comes with its own internal
 HTTP server.
 
-Specify which server to use with the the ``-s`` option, providing it either
-``internal`` or ``apache2`` values.
+Specify which server to use with the the ``-s`` option with either
+``internal`` or ``apache2``.
 
 
 Listen Port
