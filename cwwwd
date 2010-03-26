@@ -49,8 +49,8 @@ By default, cwwwd uses the Apache2 HTTP server.  If you don't have Apache
 installed on your computer, no problem!  cwwwd comes with its own internal
 HTTP server.
 
-Specify which server to use with the the ``-s`` option with either
-``internal`` or ``apache2``.
+Use the ``-s`` option with either ``internal`` or ``apache2`` to specify
+the server.
 
 
 Listen Port
