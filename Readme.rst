@@ -105,4 +105,7 @@ Start cwwwd using:
 Contact
 -------
 
-Stephen Norum (stephen@mybunnyhug.org)
+| Stephen Norum
+| stephen@mybunnyhug.org
+| http://www.mybunnyhug.org
+
