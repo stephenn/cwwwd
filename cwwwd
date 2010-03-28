@@ -196,6 +196,7 @@ def start_apache2(port, modules=[]):
     apache2_files['conf/custom.conf'] = apache2_files['conf/custom.conf'].format(
         port=port,
         doc_root=escape_path(doc_root),
+        server_name=server_names()[0],
         temp_dir=escape_path(temp_dir_path),
         allow_from=allow_from,
         deny_from=deny_from
@@ -428,27 +429,35 @@ class HttpRequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
         self.wfile.write(directory_listing(path, local_path))
 
 
-def server_urls(port):
+def compare_ip(x, y):
+    return cmp(x.split('.'), y.split('.'))
+
+
+def server_names():
     hostname = socket.gethostname()
     (name, aliaslist, addresslist) = socket.gethostbyname_ex(hostname)
-    
-    addr_format = 'http://{{0}}:{0}'.format(port)
-    
-    urls = []
-    
+
+    names = []
+
     if name:
-        urls.append(addr_format.format(name))
+        names.append(name)
 
     if aliaslist:
-        aliaslist.sort()
-        urls.extend((addr_format.format(alias) for alias in aliaslist))
+        aliaslist.sort(cmp=compare_ip)
+        names.extend(aliaslist)
 
     if addresslist:
-        addresslist.sort(cmp=lambda x,y: cmp(x.split('.'), y.split('.')))
-        urls.extend((addr_format.format(addr) for addr in addresslist))
+        addresslist.sort(cmp=compare_ip)
+        names.extend(addresslist)
     
-    return urls
+    return names
 
+
+def server_urls(port):
+    addr_format = 'http://{{0}}:{0}'.format(port)
+    
+    return [addr_format.format(n) for n in server_names()]
+    
 
 def apache2_libexec_path():
     default_path = '/usr/libexec/apache2'
@@ -465,6 +474,7 @@ def apache2_libexec_path():
         libexec_path = default_path
         
     return libexec_path
+
 
 def print_server_info(port):
     print 'Starting server on port', port
@@ -507,11 +517,14 @@ def si_prefix(value):
         prefix = prefixes[8]
     
     return (value, prefix)
+    
+    
 def parse_request_uri(req_uri):
     (path, sep, query) = req_uri.partition('?')
     path = urllib.url2pathname(path).strip('/')
 
     return (path, query)
+
 
 def validate_ip(ip):
     if ip == 'all':
@@ -1143,6 +1156,8 @@ class ServerConfig(object):
         apache2_files['conf/custom.conf'] = r'''
             Listen {port}
             DocumentRoot "{doc_root}"
+            ServerName "{server_name}"
+            
             Alias /__cwwwd__      "{temp_dir}/__cwwwd__"
             Alias /favicon.ico    "{temp_dir}/__cwwwd__/favicon.ico"
             Alias /__cwwwd_cgi__  "{temp_dir}/__cwwwd_cgi__"
