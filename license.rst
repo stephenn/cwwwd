@@ -1,6 +1,3 @@
-cwwwd
-=====
-
 Copyright (c) 2010, Stephen Norum
 
 This software is provided 'as-is', without any express or implied warranty.
