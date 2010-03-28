@@ -68,12 +68,14 @@ and ``-m``, the maximum number of ports to search.
 
 Access Control (``-a``, ``-d``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-By default only localhost may access server.  Control who is allowed and
-denied access to your server by providing comma-separated lists of IPs to
-the ``-a`` and ``-d`` options.  Use ``-a all`` to allow access to all
-clients.
+By default only localhost may access the server.  Use ``-a all`` to allow
+access to all clients.
 
-The denied client list overrides the allowed client list.
+Provide partial or full IP addresses to the ``-a`` and ``-d`` options to
+allow and deny additional clients. Each option can be specified multiple
+times.
+
+Denied clients override allowed clients.
 
 
 Document Root (``-r``)
@@ -90,16 +92,18 @@ Start cwwwd using:
 2. the first free port between 9001 to 9010,
 3. your home directory as the document root,
 4. allowing access to everyone with IP address starting with 192.168 or
-   the specific IP, 64.202.189.170
+   the specific IP 64.202.189.170,
 5. but denying access to IP addresses 192.168.0.10 and 192.168.0.11
 
 ::
 
-    $ cwwwd -s internal                  \
-            -p 9001 -m 10                \
-            -r ~/                        \
-            -a 192.168,64.202.189.170    \
-            -d 192.168.0.10,192.168.0.11
+    $ cwwwd -s internal                     \
+            -p 9001 -m 10                   \
+            -r ~/                           \
+            -a 192.168                      \
+            -a 64.202.189.170               \
+            -d 192.168.0.10                 \
+            -d 192.168.0.11
 
 
 Contact
@@ -107,5 +111,4 @@ Contact
 
 | Stephen Norum
 | stephen@mybunnyhug.org
-| http://www.mybunnyhug.org
-
+| http://www.mybunnyhug.org/
