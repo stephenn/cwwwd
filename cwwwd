@@ -753,7 +753,8 @@ def process_options(argv=None):
                       help='use DIR for document root instead of cwd')
     default='apache2'
     parser.add_option('-s', default=default,
-                      action='store', type='string', dest='server', metavar='SRVR',
+                      choices=['internal', 'apache2'],
+                      action='store', dest='server', metavar='SRVR',
                       help='server "internal" or "apache2" (default: {0})'.format(default))
     
     if argv is None:
@@ -763,7 +764,7 @@ def process_options(argv=None):
 
     if not options.doc_root:
         options.doc_root = os.curdir
- 
+  
     return (options, args)
 
 
