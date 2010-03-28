@@ -739,11 +739,19 @@ def install():
     return 0
 
 
+class CwwdOptParser(optparse.OptionParser):
+    def format_epilog(self, formatter):
+        '''
+        return raw epilog
+        '''
+        return textwrap.dedent(self.epilog if self.epilog else '')
+
+
 def process_options(argv=None):
     usage = '%prog [install | help] [options]'
     version = '%prog {version}'.format(version=__version__)
 
-    parser = optparse.OptionParser(usage=usage, version=version)
+    parser = CwwdOptParser(usage=usage, version=version)
 
     parser.add_option('-v', default=False,
                       action='store_true', dest='verbose',
@@ -761,10 +769,10 @@ def process_options(argv=None):
                       help='search MAX number of ports for a free port (default: {0})'.format(default))
     parser.add_option('-a', default=[],
                       action='append', type='string', dest='allow', metavar='HOST',
-                      help='allow server access to HOST')
+                      help='allow HOST server access')
     parser.add_option('-d', default=[],
                       action='append', type='string', dest='deny', metavar='HOST',
-                      help='deny server access to HOST')
+                      help='deny HOST server access')
     parser.add_option('-r',
                       action='store', type='string', dest='doc_root', metavar='DIR',
                       help='use DIR for document root instead of cwd')
@@ -779,6 +787,13 @@ def process_options(argv=None):
                       choices=modules,
                       action='append', dest='modules', metavar='MOD',
                       help='load additional module, MOD')
+                      
+    parser.epilog = (
+        '''
+               Install cwwwd:  cwwwd install
+        Show additional help:  cwwwd help
+        '''
+    )
     
     if argv is None:
         argv = sys.argv[1:]
